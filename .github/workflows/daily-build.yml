@@ -2,47 +2,72 @@ name: Daily API Trigger
 
 on:
   schedule:
-    - cron: "0 8 * * *" # Runs every day at 08:00 UTC
-  workflow_dispatch: # Allow manual trigger too
+    - cron: "0 8 * * *" # Daily at 08:00 UTC
+  workflow_dispatch: # Manual trigger
 
 jobs:
   run-daily-api:
     runs-on: ubuntu-latest
     steps:
-      - name: Restore versionNumber from cache
+      - name: Restore version cache
         id: cache
         uses: actions/cache@v4
         with:
-          path: version.txt
-          key: version-number
-
-      - name: Initialize or increment versionNumber
-        id: version
-        run: |
-          if [ ! -f version.txt ]; then
-            echo "1" > version.txt
-          else
-            VERSION=$(cat version.txt)
-            VERSION=$((VERSION + 1))
-            echo "$VERSION" > version.txt
-          fi
-          echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
-
-      - name: Save versionNumber to cache
-        uses: actions/cache/save@v4
-        with:
-          path: version.txt
-          key: version-number
+          path: version_data.txt
+          key: version-data
 
       - name: Get short date
         id: date
         run: |
-          DATE=$(date -u +"%b%d" | tr '[:upper:]' '[:lower:]')
-          echo "short_date=$DATE" >> $GITHUB_OUTPUT
+          TODAY=$(date -u +"%b%d" | tr '[:upper:]' '[:lower:]')
+          echo "short_date=$TODAY" >> $GITHUB_OUTPUT
+
+      - name: Determine versionNumber
+        id: version
+        run: |
+          TODAY=${{ steps.date.outputs.short_date }}
+
+          # If no cache file exists, create it for today with run count 0
+          if [ ! -f version_data.txt ]; then
+            echo "$TODAY,0" > version_data.txt
+          fi
+
+          LAST_DATE=$(cut -d',' -f1 version_data.txt)
+          RUN_COUNT=$(cut -d',' -f2 version_data.txt)
+
+          if [ "$TODAY" != "$LAST_DATE" ]; then
+            # New day → reset run count
+            RUN_COUNT=0
+            LAST_DATE=$TODAY
+          else
+            # Same day → increment run count
+            RUN_COUNT=$((RUN_COUNT + 1))
+          fi
+
+          # Save updated data
+          echo "$LAST_DATE,$RUN_COUNT" > version_data.txt
+
+          # Build version number string
+          if [ "$RUN_COUNT" -eq 0 ]; then
+            VERSION="$TODAY"
+          else
+            VERSION="$TODAY-$RUN_COUNT"
+          fi
+
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Save version cache
+        uses: actions/cache/save@v4
+        with:
+          path: version_data.txt
+          key: version-data
+
+      - name: Show version
+        run: echo "Version number is: ${{ steps.version.outputs.version }}"
 
       - name: Trigger GitHub API
         env:
-          GITHUB_TOKEN: ${{ secrets.TOKEN }} # Needs repo & workflow scope
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }}
         run: |
           curl -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -52,7 +77,7 @@ jobs:
               "ref": "release/joygame",
               "inputs": {
                 "runner": "Lokum-Mac",
-                "json-payload": "{\"buildTarget\":\"android\", \"buildApplication\": \"true\", \"buildPath\": \"Builds/lokum-googleplay-staging-joygame-${{ steps.date.outputs.short_date }}.apk\", \"addressableVersion\": \"lokum-googleplay-staging-joygame-${{ steps.date.outputs.short_date }}\", \"bundleServer\": \"cdn\", \"contentUpdate\": false, \"cleanRemoteCdn\": false, \"fixDependencies\": true, \"clientVersion\": \"0.43.0\", \"buildNumber\": \"${{ steps.version.outputs.version }}\", \"useRegionConfigPlayFabEnvironment\": true, \"backendEnvironment\": \"staging\", \"environmentKey\": \"staging\", \"appPublisher\": \"lokum\", \"appMarket\": \"googleplay\", \"uploadBuildToStore\": false, \"isProduction\": false, \"iosSandbox\": false, \"enableAnalytics\": true, \"enableBackboneLogs\": false, \"enableDenuvo\": false, \"enableAltUnityDriver\": false, \"gameServerDebugMode\": false, \"addressableDebugMode\": false, \"manualCatalogUpdate\": false}",
+                "json-payload": "{\"buildTarget\":\"android\", \"buildApplication\": \"true\", \"buildPath\": \"Builds/lokum-googleplay-staging-joygame-${{ steps.version.outputs.version }}.apk\", \"addressableVersion\": \"lokum-googleplay-staging-joygame-${{ steps.version.outputs.version }}\", \"bundleServer\": \"cdn\", \"contentUpdate\": false, \"cleanRemoteCdn\": false, \"fixDependencies\": true, \"clientVersion\": \"0.43.0\", \"buildNumber\": \"${{ steps.version.outputs.version }}\", \"useRegionConfigPlayFabEnvironment\": true, \"backendEnvironment\": \"staging\", \"environmentKey\": \"staging\", \"appPublisher\": \"lokum\", \"appMarket\": \"googleplay\", \"uploadBuildToStore\": false, \"isProduction\": false, \"iosSandbox\": false, \"enableAnalytics\": true, \"enableBackboneLogs\": false, \"enableDenuvo\": false, \"enableAltUnityDriver\": false, \"gameServerDebugMode\": false, \"addressableDebugMode\": false, \"manualCatalogUpdate\": false}",
                 "branch": "release/joygame",
                 "unity-path": "/Applications/Unity/Hub/Editor/2022.3.50f1/Unity.app/Contents/MacOS/Unity",
                 "repository-path": "/Users/lokum/actions-runner/_work/git-repos/zulamobile-client"
