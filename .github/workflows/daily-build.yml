@@ -1,0 +1,60 @@
+name: Daily API Trigger
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # Runs every day at 08:00 UTC
+  workflow_dispatch: # Allow manual trigger too
+
+jobs:
+  run-daily-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore versionNumber from cache
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: version.txt
+          key: version-number
+
+      - name: Initialize or increment versionNumber
+        id: version
+        run: |
+          if [ ! -f version.txt ]; then
+            echo "1" > version.txt
+          else
+            VERSION=$(cat version.txt)
+            VERSION=$((VERSION + 1))
+            echo "$VERSION" > version.txt
+          fi
+          echo "version=$(cat version.txt)" >> $GITHUB_OUTPUT
+
+      - name: Save versionNumber to cache
+        uses: actions/cache/save@v4
+        with:
+          path: version.txt
+          key: version-number
+
+      - name: Get short date
+        id: date
+        run: |
+          DATE=$(date -u +"%b%d" | tr '[:upper:]' '[:lower:]')
+          echo "short_date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Trigger GitHub API
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_GITHUB_TOKEN }} # Needs repo & workflow scope
+        run: |
+          curl -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/ingamegroup/zulamobile-client/actions/workflows/continuous-deployment-boombyte-fatih.yml/dispatches \
+            -d '{
+              "ref": "release/joygame",
+              "inputs": {
+                "runner": "Lokum-Mac",
+                "json-payload": "{\"buildTarget\":\"android\", \"buildApplication\": \"true\", \"buildPath\": \"Builds/lokum-googleplay-staging-joygame-${{ steps.date.outputs.short_date }}.apk\", \"addressableVersion\": \"lokum-googleplay-staging-joygame-${{ steps.date.outputs.short_date }}\", \"bundleServer\": \"cdn\", \"contentUpdate\": false, \"cleanRemoteCdn\": false, \"fixDependencies\": true, \"clientVersion\": \"0.43.0\", \"buildNumber\": \"${{ steps.version.outputs.version }}\", \"useRegionConfigPlayFabEnvironment\": true, \"backendEnvironment\": \"staging\", \"environmentKey\": \"staging\", \"appPublisher\": \"lokum\", \"appMarket\": \"googleplay\", \"uploadBuildToStore\": false, \"isProduction\": false, \"iosSandbox\": false, \"enableAnalytics\": true, \"enableBackboneLogs\": false, \"enableDenuvo\": false, \"enableAltUnityDriver\": false, \"gameServerDebugMode\": false, \"addressableDebugMode\": false, \"manualCatalogUpdate\": false}",
+                "branch": "release/joygame",
+                "unity-path": "/Applications/Unity/Hub/Editor/2022.3.50f1/Unity.app/Contents/MacOS/Unity",
+                "repository-path": "/Users/lokum/actions-runner/_work/git-repos/zulamobile-client"
+              }
+            }'
